@@ -34,6 +34,10 @@ public class SES_ESPictrueInfo extends ASN1Object {
      */
     private ASN1Integer height;
 
+    public SES_ESPictrueInfo() {
+        super();
+    }
+
     public SES_ESPictrueInfo(
             ASN1Sequence seq) {
         Enumeration<?> e = seq.getObjects();
@@ -44,7 +48,10 @@ public class SES_ESPictrueInfo extends ASN1Object {
     }
 
 
-    public SES_ESPictrueInfo(DERIA5String type, ASN1OctetString data, ASN1Integer width, ASN1Integer height) {
+    public SES_ESPictrueInfo(DERIA5String type,
+                             ASN1OctetString data,
+                             ASN1Integer width,
+                             ASN1Integer height) {
         this.type = type;
         this.data = data;
         this.width = width;
@@ -124,6 +131,6 @@ public class SES_ESPictrueInfo extends ASN1Object {
         v.add(data);
         v.add(width);
         v.add(height);
-        return new BERSequence(v);
+        return new DERSequence(v);
     }
 }

@@ -5,7 +5,7 @@
     <parent>
         <artifactId>ofdrw</artifactId>
         <groupId>org.ofdrw</groupId>
-        <version>1.2.0</version>
+        <version>1.5.2</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -13,6 +13,12 @@
     <description>OFD 文件解析器，用于解析文件内容，为修改和签名提供基本的API访问能力。</description>
 
     <dependencies>
+        <dependency>
+            <groupId>org.ofdrw</groupId>
+            <artifactId>ofdrw-gv</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>

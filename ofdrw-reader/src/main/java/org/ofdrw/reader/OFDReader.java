@@ -3,13 +3,20 @@ package org.ofdrw.reader;
 import net.lingala.zip4j.ZipFile;
 import org.apache.commons.io.FileUtils;
 import org.dom4j.DocumentException;
-import org.dom4j.Element;
+import org.ofdrw.core.annotation.Annotations;
+import org.ofdrw.core.attachment.Attachments;
+import org.ofdrw.core.attachment.CT_Attachment;
+import org.ofdrw.core.basicStructure.doc.CT_CommonData;
+import org.ofdrw.core.basicStructure.doc.CT_PageArea;
 import org.ofdrw.core.basicStructure.doc.Document;
 import org.ofdrw.core.basicStructure.ofd.DocBody;
 import org.ofdrw.core.basicStructure.pageObj.Page;
 import org.ofdrw.core.basicStructure.pageTree.Pages;
+import org.ofdrw.core.basicType.ST_Box;
+import org.ofdrw.core.basicType.ST_ID;
 import org.ofdrw.core.basicType.ST_Loc;
 import org.ofdrw.core.signatures.Signatures;
+import org.ofdrw.pkg.container.DocDir;
 import org.ofdrw.pkg.container.OFDDir;
 
 import java.io.Closeable;
@@ -130,6 +137,7 @@ public class OFDReader implements Closeable {
         }
     }
 
+
     /**
      * 文档是否包含数字签名
      *
@@ -147,12 +155,64 @@ public class OFDReader implements Closeable {
     }
 
     /**
-     * 通过页面页码获取页面对象
+     * 获取注解列表文件对象
+     * <p>
+     * 如果文档中没有注释文件，那么返还null
      *
-     * @param pageNum 页码，从1起
-     * @return 页面对象
+     * @return 注解列表文件对象或null
      */
-    public Page getPage(int pageNum) {
+    public Annotations getAnnotations() {
+        try {
+            rl.save();
+            DocBody docBody = ofdDir.getOfd().getDocBody();
+            ST_Loc docRoot = docBody.getDocRoot();
+            // 路径解析对象获取并缓存虚拟容器
+            Document document = rl.get(docRoot, Document::new);
+            rl.cd(docRoot.parent());
+
+            ST_Loc annotations = document.getAnnotations();
+            if (annotations == null) {
+                return null;
+            }
+            return rl.get(annotations, Annotations::new);
+        } catch (FileNotFoundException | DocumentException e) {
+            throw new BadOFDException("OFD解析失败，原因:" + e.getMessage(), e);
+        } finally {
+            // 还原原有工作区
+            rl.restore();
+        }
+    }
+
+    /**
+     * 获取OFD含有的总页面数量
+     *
+     * @return 总页数
+     */
+    public int getNumberOfPages() {
+        try {
+            rl.save();
+            DocBody docBody = ofdDir.getOfd().getDocBody();
+            ST_Loc docRoot = docBody.getDocRoot();
+            // 路径解析对象获取并缓存虚拟容器
+            Document document = rl.get(docRoot, Document::new);
+            rl.cd(docRoot.parent());
+            Pages pages = document.getPages();
+            return pages.getSize();
+        } catch (FileNotFoundException | DocumentException e) {
+            throw new BadOFDException("OFD解析失败，原因:" + e.getMessage(), e);
+        } finally {
+            // 还原原有工作区
+            rl.restore();
+        }
+    }
+
+    /**
+     * 获取页面信息
+     *
+     * @param pageNum 页码，从1开始
+     * @return 页面信息
+     */
+    public PageInfo getPageInfo(int pageNum) {
         if (pageNum <= 0) {
             throw new NumberFormatException("页码(pageNum)不能小于0");
         }
@@ -172,13 +232,69 @@ public class OFDReader implements Closeable {
             }
             // 获取页面的路径
             ST_Loc pageLoc = pageList.get(index).getBaseLoc();
-            return rl.get(pageLoc, Page::new);
+
+            Page obj = rl.get(pageLoc, Page::new);
+            // 获取页面的容器绝对路径
+            pageLoc = rl.getAbsTo(pageLoc);
+
+            ST_Box pageSize = getPageSize(obj);
+            return new PageInfo()
+                    .setIndex(pageNum)
+                    .setId(pageList.get(index).getID())
+                    .setObj(obj)
+                    .setSize(pageSize.clone())
+                    .setPageAbsLoc(pageLoc);
         } catch (FileNotFoundException | DocumentException e) {
             throw new RuntimeException("OFD解析失败，原因:" + e.getMessage(), e);
         } finally {
             // 还原原有工作区
             rl.restore();
         }
+    }
+
+    /**
+     * 获取页面物理大小
+     * <p>
+     * 如果页面没有定义页面区域，则使用文件 CommonData中的定义
+     *
+     * @param page 页面对象
+     * @return 页面大小
+     */
+    public ST_Box getPageSize(Page page) {
+        CT_PageArea pageArea = page.getArea();
+        if (pageArea == null) {
+            // 如果页面没有定义页面区域，则使用文件 CommonData中的定义
+            Document document;
+            try {
+                document = ofdDir.obtainDocDefault().getDocument();
+            } catch (FileNotFoundException | DocumentException e) {
+                throw new BadOFDException("OFD解析失败，原因:" + e.getMessage(), e);
+            }
+            CT_CommonData commonData = document.getCommonData();
+            pageArea = commonData.getPageArea();
+        }
+
+        return pageArea.getPhysicalBox();
+    }
+
+    /**
+     * 通过页面页码获取页面对象
+     *
+     * @param pageNum 页码，从1起
+     * @return 页面对象
+     */
+    public Page getPage(int pageNum) {
+        return getPageInfo(pageNum).getObj();
+    }
+
+    /**
+     * 获取页面的对象ID
+     *
+     * @param pageNum 页码
+     * @return 对象ID
+     */
+    public ST_ID getPageObjectId(int pageNum) {
+        return getPageInfo(pageNum).getId();
     }
 
     /**
@@ -189,6 +305,106 @@ public class OFDReader implements Closeable {
     public ResourceLocator getResourceLocator() {
         return rl;
     }
+
+
+    /**
+     * 获取附件对象
+     *
+     * @param name 附件名称
+     * @return 如果附件或附件记录不存在，那么返还null
+     * @throws BadOFDException 文档结构损坏
+     */
+    public CT_Attachment getAttachment(String name) {
+        if (name == null || name.trim().length() == 0) {
+            return null;
+        }
+        rl.save();
+        try {
+            return getAttachment(name, rl);
+        } finally {
+            rl.restore();
+        }
+    }
+
+    /**
+     * 获取附件文件
+     * <p>
+     * 注意：该文件会在Close Reader时候被删除，请在之前复制到其他地方
+     *
+     * @param name 附件名称
+     * @return 附件文件路径
+     */
+    public Path getAttachmentFile(String name) {
+        if (name == null || name.trim().length() == 0) {
+            return null;
+        }
+        rl.save();
+        try {
+            CT_Attachment attachment = getAttachment(name, rl);
+            if (attachment == null) {
+                return null;
+            }
+            ST_Loc fileLoc = attachment.getFileLoc();
+            try {
+                return rl.getFile(fileLoc);
+            } catch (FileNotFoundException e) {
+                System.err.println(">> 无法根据附件对象的描述获取到附件: " + fileLoc.toString());
+                return null;
+            }
+        } finally {
+            rl.restore();
+        }
+    }
+
+    /**
+     * 获取附件对象
+     * <p>
+     * 该方法不会恢复资源定位器
+     *
+     * @param name 附件名称
+     * @param rl   资源定位器
+     * @return 附件对象
+     */
+    private CT_Attachment getAttachment(String name, ResourceLocator rl) {
+        if (name == null || name.trim().length() == 0) {
+            return null;
+        }
+        rl.save();
+        try {
+            DocDir docDir = ofdDir.obtainDocDefault();
+            rl.cd(docDir);
+            Document document = null;
+            Attachments attachments = null;
+            try {
+                document = docDir.getDocument();
+            } catch (FileNotFoundException | DocumentException e) {
+                throw new BadOFDException(e);
+            }
+            ST_Loc attachmentsLoc = document.getAttachments();
+            if (attachmentsLoc == null) {
+                // 文档中没有附件目录文件
+                return null;
+            }
+            try {
+                // 获取附件目录
+                attachments = rl.get(attachmentsLoc, Attachments::new);
+            } catch (FileNotFoundException | DocumentException e) {
+                System.err.println(">> 无法获取或解析Attachments.xml: " + e.getMessage());
+                return null;
+            }
+            for (CT_Attachment attachment : attachments.getAttachments()) {
+                // 寻找匹配名称的附件
+                if (attachment.getAttachmentName().equals(name)) {
+                    return attachment;
+                }
+            }
+        } finally {
+            rl.restore();
+        }
+        return null;
+    }
+
+
 
     /**
      * 关闭文档

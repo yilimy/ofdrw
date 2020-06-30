@@ -13,6 +13,12 @@ import java.util.Enumeration;
 public class SES_Header extends ASN1Object {
 
     /**
+     * 电子印章数据结构版本号，V4
+     */
+    public static final ASN1Integer V4 = new ASN1Integer(4);
+
+
+    /**
      * 电子印章数据标识符
      * 固定值“ES”
      */
@@ -35,6 +41,10 @@ public class SES_Header extends ASN1Object {
      * 在互联互通时，用于识别不同的软件厂商实现
      */
     private DERIA5String vid;
+
+    public SES_Header() {
+        super();
+    }
 
     public SES_Header(ASN1Integer version, DERIA5String vid) {
         this.id = ID;
@@ -97,6 +107,6 @@ public class SES_Header extends ASN1Object {
         v.add(ID);
         v.add(version);
         v.add(vid);
-        return new BERSequence(v);
+        return new DERSequence(v);
     }
 }

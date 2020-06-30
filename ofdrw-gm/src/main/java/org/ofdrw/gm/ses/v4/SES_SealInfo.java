@@ -42,6 +42,10 @@ public class SES_SealInfo extends ASN1Object {
      */
     private ExtensionDatas extDatas;
 
+    public SES_SealInfo() {
+        super();
+    }
+
     public SES_SealInfo(SES_Header header,
                         DERIA5String esID,
                         SES_ESPropertyInfo property,
@@ -101,8 +105,9 @@ public class SES_SealInfo extends ASN1Object {
         return property;
     }
 
-    public void setProperty(SES_ESPropertyInfo property) {
+    public SES_SealInfo setProperty(SES_ESPropertyInfo property) {
         this.property = property;
+        return this;
     }
 
     public SES_ESPictrueInfo getPicture() {
@@ -133,6 +138,6 @@ public class SES_SealInfo extends ASN1Object {
         if (extDatas != null) {
             v.add(extDatas);
         }
-        return new BERSequence(v);
+        return new DERSequence(v);
     }
 }

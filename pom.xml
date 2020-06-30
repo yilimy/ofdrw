@@ -9,7 +9,7 @@
     <groupId>org.ofdrw</groupId>
     <artifactId>ofdrw</artifactId>
     <packaging>pom</packaging>
-    <version>1.2.0</version>
+    <version>1.5.2</version>
 
     <url>https://github.com/Trisia/ofdrw</url>
     <description>Open Fixed layout Document Reader And Writer Libary(OFD-RW) provider developers to generate ofd
@@ -71,14 +71,6 @@
         </snapshotRepository>
     </distributionManagement>
 
-    <dependencies>
-        <dependency>
-            <groupId>org.ofdrw</groupId>
-            <artifactId>ofdrw-gv</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-    </dependencies>
-
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -91,6 +83,11 @@
             <dependency>
                 <groupId>org.bouncycastle</groupId>
                 <artifactId>bcprov-jdk15on</artifactId>
+                <version>1.65</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcpkix-jdk15on</artifactId>
                 <version>1.65</version>
             </dependency>
             <!-- https://mvnrepository.com/artifact/commons-io/commons-io -->

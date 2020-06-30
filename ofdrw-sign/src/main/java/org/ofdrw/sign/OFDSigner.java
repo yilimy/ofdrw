@@ -20,16 +20,20 @@ import org.ofdrw.reader.BadOFDException;
 import org.ofdrw.reader.OFDReader;
 import org.ofdrw.reader.ResourceLocator;
 import org.ofdrw.sign.stamppos.StampAppearance;
+import org.ofdrw.sign.verify.exceptions.FileIntegrityException;
 
 import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.DigestInputStream;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -52,10 +56,8 @@ public class OFDSigner implements Closeable {
     /**
      * OFDRW 签名提供者
      */
-    public static Provider OFDRW_Provider;
-
-    static {
-        OFDRW_Provider = new Provider()
+    public static Provider OFDRW_Provider() {
+        return new Provider()
                 .setProviderName("ofdrw-sign")
                 .setCompany("ofdrw")
                 .setVersion(GlobalVar.Version);
@@ -108,7 +110,7 @@ public class OFDSigner implements Closeable {
     /**
      * 是否已经执行exeSign
      */
-    private boolean hasSign ;
+    private boolean hasSign;
 
 
     /**
@@ -280,7 +282,6 @@ public class OFDSigner implements Closeable {
     }
 
 
-
     /**
      * 签名或签章执行器
      * <p>
@@ -316,7 +317,7 @@ public class OFDSigner implements Closeable {
             signsDir.setSignatures(signListObj);
 
             // 构造签名列表文件路径
-            signaturesLoc = signDir.getAbsLoc()
+            signaturesLoc = signsDir.getAbsLoc()
                     .cat(SignsDir.SignaturesFileName);
             // 设置OFD.xml 的签名列表文件入口
             try {
@@ -335,9 +336,8 @@ public class OFDSigner implements Closeable {
          *
          * 如果签名列表文件不存在那么创建，如果已经存在那么更新到文件系统
          */
-        // 签名文件 相对路径
-        ST_Loc signatureLoc = ST_Loc.getInstance(
-                signDir.getContainerName() + "/" + SignDir.SignatureFileName);
+        // 签名文件
+        ST_Loc signatureLoc = signDir.getAbsLoc().cat(SignDir.SignatureFileName);
         // 构造列表文件中的签名记录并放入签名列表中
         signListObj.addSignature(new org.ofdrw.core.signatures.Signature()
                 // 设置ID
@@ -361,7 +361,10 @@ public class OFDSigner implements Closeable {
         // 设置签章原文的保护信息为：签名文件容器中绝对路径。
         String propertyInfo = signDir.getAbsLoc().cat(SignDir.SignatureFileName).toString();
         // 调用容器提供方法计算签章值。
-        byte[] signedValue = signContainer.sign(Files.newInputStream(signatureFilePath), propertyInfo);
+        byte[] signedValue;
+        try (InputStream inData = Files.newInputStream(signatureFilePath)) {
+            signedValue = signContainer.sign(inData, propertyInfo);
+        }
         Path signedValuePath = Paths.get(signDir.getSysAbsPath(), SignDir.SignedValueFileName);
         // 将签名值写入到 SignedValue.dat中
         Files.write(signedValuePath, signedValue);
@@ -386,25 +389,26 @@ public class OFDSigner implements Closeable {
         // 构造签名信息
         SignedInfo signedInfo = new SignedInfo()
                 // 设置签名模块提供者信息
-                .setProvider(OFDRW_Provider)
+                .setProvider(OFDRW_Provider())
                 // 设置签名方法
                 .setSignatureMethod(signContainer.getSignAlgOID())
                 // 设置签名时间
                 .setSignatureDateTime(DF.format(LocalDateTime.now()));
 
         // 如果是电子签章，那么设置电子印章
+        final ST_Loc signDirAbsLoc = signDir.getAbsLoc();
         if (signContainer.getSignType() == SigType.Seal) {
-            Path sealPath = Paths.get(signDir.getSysAbsPath(), SignDir.SealFileName);
             // 获取电子印章二进制字节
             byte[] sealBin = signContainer.getSeal();
-            if (sealBin == null || sealBin.length == 0) {
-                throw new SignatureException("提供的电子印章数据（getSeal）为空");
+            // 由于电子印章参数为可选参数，这里移除非空检查
+            if (sealBin != null && sealBin.length != 0) {
+                Path sealPath = Paths.get(signDir.getSysAbsPath(), SignDir.SealFileName);
+                // 将电子印章写入文件
+                Files.write(sealPath, sealBin);
+                // 构造印章信息
+                Seal seal = new Seal().setBaseLoc(signDirAbsLoc.cat(SignDir.SealFileName));
+                signedInfo.setSeal(seal);
             }
-            // 将电子印章写入文件
-            Files.write(sealPath, sealBin);
-            // 构造印章信息
-            Seal seal = new Seal().setBaseLoc(new ST_Loc(SignDir.SealFileName));
-            signedInfo.setSeal(seal);
         }
 
         // 加入签名关联的外观
@@ -436,10 +440,8 @@ public class OFDSigner implements Closeable {
         // 获取要被保护的文件信息序列
         List<ToDigestFileInfo> toDigestFileInfos = toBeDigestFileList();
         for (ToDigestFileInfo fileInfo : toDigestFileInfos) {
-            // 获取待保护文件的二进制序列
-            byte[] fileBin = Files.readAllBytes(fileInfo.getSysPath());
             // 计算文件杂凑值
-            byte[] digest = md.digest(fileBin);
+            byte[] digest = calculateFileDigest(md, fileInfo.getSysPath());
             // 重置杂凑函数
             md.reset();
             Reference ref = new Reference()
@@ -457,7 +459,7 @@ public class OFDSigner implements Closeable {
          */
         Signature signature = new Signature()
                 // 设置签名数据文件位置
-                .setSignedValue(new ST_Loc(SignDir.SignedValueFileName))
+                .setSignedValue(signDirAbsLoc.cat(SignDir.SignedValueFileName))
                 .setSignedInfo(signedInfo);
         signDir.setSignature(signature);
         // 将签名描述文件根节点写入到文件系统中
@@ -466,6 +468,26 @@ public class OFDSigner implements Closeable {
         return Paths.get(signDir.getSysAbsPath(), SignDir.SignatureFileName);
     }
 
+    /**
+     * 使用多次读取计算文件杂凑值
+     * <p>
+     * 减少内存使用
+     *
+     * @param md   杂凑计算函数
+     * @param path 文件路径
+     * @return 杂凑值
+     * @throws IOException IO读写异常
+     */
+    private byte[] calculateFileDigest(MessageDigest md, Path path) throws IOException {
+        try (InputStream in = Files.newInputStream(path);
+             DigestInputStream dis = new DigestInputStream(in, md)) {
+            byte[] buffer = new byte[4096];
+            // 根据缓存读入
+            while (dis.read(buffer) > -1) ;
+            // 计算最终文件杂凑值
+            return md.digest();
+        }
+    }
 
     /**
      * 进行签名/章

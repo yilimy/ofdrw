@@ -21,6 +21,10 @@ public class SESeal extends ASN1Object {
      */
     private SES_SignInfo signInfo;
 
+    public SESeal() {
+        super();
+    }
+
     public SESeal(SES_SealInfo esealInfo, SES_SignInfo signInfo) {
         this.esealInfo = esealInfo;
         this.signInfo = signInfo;
@@ -64,6 +68,6 @@ public class SESeal extends ASN1Object {
         ASN1EncodableVector v = new ASN1EncodableVector(3);
         v.add(esealInfo);
         v.add(signInfo);
-        return new BERSequence(v);
+        return new DERSequence(v);
     }
 }

@@ -36,10 +36,6 @@ public class ResourceLocator {
     public static Pattern PtDocRes = Pattern.compile("/(Doc_\\d+)/Res");
 
     /**
-     * 当前目录
-     */
-    private LinkedList<String> workDir;
-    /**
      * 资源容器
      * <p>
      * 该容器带有缓存功能
@@ -47,22 +43,43 @@ public class ResourceLocator {
     private OFDDir ofdDir;
 
     /**
+     * 当前目录
+     */
+    private LinkedList<String> workDir = new LinkedList<>();
+
+
+    /**
      * 保存的路径栈
      * <p>
      * 每次调用Save都会入栈
      */
-    private LinkedList<LinkedList<String>> savedStack;
+    private LinkedList<LinkedList<String>> savedStack = new LinkedList<>();
+
 
     private ResourceLocator() {
-
     }
 
     public ResourceLocator(OFDDir ofdDir) {
         this.ofdDir = ofdDir;
         // 默认工作目录为OFD容器的根目录
-        this.workDir = new LinkedList<>();
-        this.savedStack = new LinkedList<>();
         this.workDir.add("/");
+    }
+
+    /***
+     * 通过虚拟容器创建资源加载器
+     *
+     * 创建资源加载器的同时切换路径至虚拟容器的目录
+     *
+     * @param vc 虚拟容器
+     */
+    public ResourceLocator(VirtualContainer vc) {
+        VirtualContainer p = vc;
+        // 找到根路径
+        while (p != p.getParent()) {
+            p = p.getParent();
+        }
+        this.ofdDir = (OFDDir) p;
+        this.cd(vc.getAbsLoc().getLoc());
     }
 
     /**
@@ -149,6 +166,20 @@ public class ResourceLocator {
      */
     public ResourceLocator restWd() {
         return cd("/");
+    }
+
+
+    /**
+     * 切换到制定的虚拟容器目录下
+     *
+     * @param vc 虚拟容器
+     * @return this
+     */
+    public ResourceLocator cd(VirtualContainer vc) {
+        if (vc == null) {
+            throw new IllegalArgumentException("改变目录的容器对象（vc）为空");
+        }
+        return cd(vc.getAbsLoc().getLoc());
     }
 
     /**
@@ -243,6 +274,7 @@ public class ResourceLocator {
         return pwd(this.workDir);
     }
 
+
     /**
      * 打印工作目录 Print Work Directory
      *
@@ -269,6 +301,42 @@ public class ResourceLocator {
         return sb.toString();
     }
 
+
+    /**
+     * 获取以当前路径为基础的容器内绝对路径
+     *
+     * @param to 目标路径
+     * @return 容器内绝对路径
+     */
+    public ST_Loc getAbsTo(ST_Loc to) {
+        if (to == null) {
+            return new ST_Loc(pwd());
+        }
+        String loc = to.getLoc();
+        if (loc.startsWith("/")) {
+            return new ST_Loc(loc);
+        }
+
+        // 查询工作目录
+        LinkedList<String> wd = new LinkedList<>(this.workDir);
+        // 文件名称
+        String fileName;
+        int indexOf = loc.lastIndexOf('/');
+        if (indexOf != -1) {
+            // 切换工作目录
+            this.cd(wd, loc.substring(0, indexOf + 1));
+            fileName = loc.substring(indexOf + 1);
+        } else {
+            fileName = loc;
+        }
+        String p = pwd(wd);
+        if (p.endsWith("/")) {
+            loc = p + fileName;
+        } else {
+            loc = p + "/" + fileName;
+        }
+        return new ST_Loc(loc);
+    }
 
     /**
      * 根据路径获取获取对应的资源对象
@@ -305,7 +373,7 @@ public class ResourceLocator {
         int indexOf = loc.lastIndexOf('/');
         if (indexOf != -1) {
             // 切换工作目录
-            this.cd(wd, loc.substring(0, indexOf));
+            this.cd(wd, loc.substring(0, indexOf + 1));
             fileName = loc.substring(indexOf + 1);
         } else {
             fileName = loc;
@@ -335,7 +403,7 @@ public class ResourceLocator {
         int indexOf = loc.lastIndexOf('/');
         if (indexOf != -1) {
             // 切换工作目录
-            this.cd(wd, loc.substring(0, indexOf));
+            this.cd(wd, loc.substring(0, indexOf + 1));
             fileName = loc.substring(indexOf + 1);
         } else {
             fileName = loc;
@@ -375,6 +443,25 @@ public class ResourceLocator {
             }
         }
         return vc;
+    }
+
+    /**
+     * 根据路径获取虚拟容器对象
+     * <p>
+     * 获取的同时会缓存整个容器链路
+     *
+     * @param containerPath 容器目录
+     * @return 虚拟容器
+     * @throws FileNotFoundException 路径不存在
+     */
+    public VirtualContainer getContainer(String containerPath) throws FileNotFoundException {
+        this.save();
+        try {
+            this.cd(containerPath);
+            return getContainer(this.workDir);
+        } finally {
+            this.restore();
+        }
     }
 
 }

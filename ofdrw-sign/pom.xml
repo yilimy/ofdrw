@@ -5,17 +5,27 @@
     <parent>
         <artifactId>ofdrw</artifactId>
         <groupId>org.ofdrw</groupId>
-        <version>1.2.0</version>
+        <version>1.5.2</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
     <artifactId>ofdrw-sign</artifactId>
 
     <dependencies>
+        <dependency>
+            <groupId>org.ofdrw</groupId>
+            <artifactId>ofdrw-gv</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>org.ofdrw</groupId>
             <artifactId>ofdrw-reader</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.ofdrw</groupId>
+            <artifactId>ofdrw-gm</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

@@ -1,6 +1,9 @@
 package org.ofdrw.layout;
 
 import org.dom4j.DocumentException;
+import org.dom4j.Element;
+import org.ofdrw.core.attachment.Attachments;
+import org.ofdrw.core.attachment.CT_Attachment;
 import org.ofdrw.core.basicStructure.doc.CT_CommonData;
 import org.ofdrw.core.basicStructure.doc.Document;
 import org.ofdrw.core.basicStructure.ofd.DocBody;
@@ -12,12 +15,17 @@ import org.ofdrw.core.basicType.ST_ID;
 import org.ofdrw.core.basicType.ST_Loc;
 import org.ofdrw.gv.GlobalVar;
 import org.ofdrw.layout.edit.AdditionVPage;
+import org.ofdrw.layout.edit.Annotation;
+import org.ofdrw.layout.edit.AnnotationRender;
+import org.ofdrw.layout.edit.Attachment;
 import org.ofdrw.layout.element.Div;
 import org.ofdrw.layout.engine.*;
 import org.ofdrw.layout.exception.DocReadException;
 import org.ofdrw.pkg.container.DocDir;
 import org.ofdrw.pkg.container.OFDDir;
+import org.ofdrw.reader.BadOFDException;
 import org.ofdrw.reader.OFDReader;
+import org.ofdrw.reader.PageInfo;
 import org.ofdrw.reader.ResourceLocator;
 
 import java.io.Closeable;
@@ -66,6 +74,19 @@ public class OFDDoc implements Closeable {
      * 同时需要修改此 MaxUnitID值。
      */
     private AtomicInteger MaxUnitID = new AtomicInteger(0);
+
+    /**
+     * 外部资源管理器
+     */
+    ResManager prm;
+
+    /**
+     * 注释渲染器
+     * <p>
+     * 仅在需要增加注释时进行初始化
+     */
+    private AnnotationRender annotationRender;
+
     /**
      * 流式布局元素队列
      */
@@ -90,6 +111,17 @@ public class OFDDoc implements Closeable {
      * 此处只是保留引用，为了方便操作。
      */
     private CT_CommonData cdata;
+
+    /**
+     * 文档是否已经关闭
+     * true 表示已经关闭，false 表示未关闭
+     */
+    private boolean closed = false;
+
+    /**
+     * OFD文档对象
+     */
+    private Document ofdDocument;
 
 
     /**
@@ -174,21 +206,21 @@ public class OFDDoc implements Closeable {
         OFD ofd = new OFD().addDocBody(docBody);
 
         // 创建一个低层次的文档对象
-        Document lowDoc = new Document();
-        cdata = new CT_CommonData()
-                // 由于有字形资源所以一定存在公共资源，这里县创建
-                .setPublicRes(new ST_Loc("PublicRes.xml"));
+        ofdDocument = new Document();
+        cdata = new CT_CommonData();
         // 默认使用RGB颜色空间所以此处不设置颜色空间
         // 设置页面属性
         this.setDefaultPageLayout(this.pageLayout);
-        lowDoc.setCommonData(cdata)
+        ofdDocument.setCommonData(cdata)
                 // 空的页面引用集合，该集合将会在解析虚拟页面时得到填充
                 .setPages(new Pages());
 
         ofdDir = OFDDir.newOFD()
                 .setOfd(ofd);
         // 创建一个新的文档
-        ofdDir.newDoc().setDocument(lowDoc);
+        DocDir docDir = ofdDir.newDoc();
+        docDir.setDocument(ofdDocument);
+        prm = new ResManager(docDir, MaxUnitID);
     }
 
     /**
@@ -207,12 +239,13 @@ public class OFDDoc implements Closeable {
         ResourceLocator rl = reader.getResourceLocator();
         // 找到 Document.xml文件并且序列化
         ST_Loc docRoot = docBody.getDocRoot();
-        Document doc = rl.get(docRoot, Document::new);
+        ofdDocument = rl.get(docRoot, Document::new);
         // 取出文档修改前的文档最大ID
-        cdata = doc.getCommonData();
+        cdata = ofdDocument.getCommonData();
         ST_ID maxUnitID = cdata.getMaxUnitID();
         // 设置当前文档最大ID
         MaxUnitID = new AtomicInteger(maxUnitID.getId().intValue());
+        prm = new ResManager(ofdDir.obtainDocDefault(), MaxUnitID);
     }
 
     /**
@@ -263,6 +296,31 @@ public class OFDDoc implements Closeable {
     }
 
     /**
+     * 向页面中增加注释对象
+     *
+     * @param pageNum    页码
+     * @param annotation 注释对象
+     * @return this
+     */
+    public OFDDoc addAnnotation(int pageNum, Annotation annotation) throws IOException {
+        if (annotation == null) {
+            return this;
+        }
+
+        if (reader == null) {
+            throw new RuntimeException("仅在修改模式下允许获取追加注释对象，请使用reader构造");
+        }
+        if (annotationRender == null) {
+            annotationRender = new AnnotationRender(reader.getOFDDir().obtainDocDefault(), prm, MaxUnitID);
+        }
+        // 获取页面信息
+        PageInfo pageInfo = reader.getPageInfo(pageNum);
+        // 渲染注释内容
+        annotationRender.render(pageInfo, annotation);
+        return this;
+    }
+
+    /**
      * 获取页面样式
      *
      * @return 页面样式
@@ -271,8 +329,108 @@ public class OFDDoc implements Closeable {
         return pageLayout;
     }
 
+    /**
+     * 向文档中添加附件文件
+     * <p>
+     * 如果名称相同原有附件将会被替换
+     *
+     * @param attachment 附件文件对象
+     * @return this
+     * @throws IOException 文件操作异常
+     */
+    public OFDDoc addAttachment(Attachment attachment) throws IOException {
+        if (attachment == null) {
+            return this;
+        }
+        DocDir docDefault = ofdDir.obtainDocDefault();
+        Path file = attachment.getFile();
+        docDefault.addResource(file);
+        // 构造附件文件存放路径
+        ST_Loc loc = docDefault.getRes().getAbsLoc()
+                .cat(file.getFileName().toString());
+        // 计算附件所占用的空间，单位KB。
+        double size = Files.size(file) / 1024d;
+        CT_Attachment ctAttachment = attachment.getAttachment()
+                .setID(String.valueOf(MaxUnitID.incrementAndGet()))
+                .setCreationDate(LocalDate.now())
+                .setSize(size)
+                .setFileLoc(loc);
+        ResourceLocator rl = new ResourceLocator(ofdDir);
+        // 获取附件目录，并切换目录到与附件列表文件同级
+        Attachments attachments = obtainAttachments(docDefault, rl);
+        // 清理已经存在的同名附件
+        cleanOldAttachment(rl, attachments, attachment.getName());
+        // 加入附件记录
+        attachments.addAttachment(ctAttachment);
+        return this;
+    }
+
+    /**
+     * 清理已经存在的资源
+     *
+     * @param rl          资源加载器
+     * @param attachments 附件列表
+     * @param name        附件名称
+     */
+    private void cleanOldAttachment(ResourceLocator rl,
+                                    Attachments attachments,
+                                    String name) throws IOException {
+        final List<CT_Attachment> list = attachments.getAttachments();
+        for (CT_Attachment att : list) {
+            // 找到匹配的附件
+            if (att.getAttachmentName().equals(name)) {
+                // 删除附件记录
+                attachments.remove(att);
+                // 删除附件的文件
+                ST_Loc fileLoc = att.getFileLoc();
+                Path file = rl.getFile(fileLoc);
+                if (file != null && Files.exists(file)) {
+                    Files.delete(file);
+                }
+                break;
+            }
+        }
+    }
+
+    /**
+     * 获取附件列表文件，如果文件不存在则创建
+     * <p>
+     * 该操作将会切换资源加载器到与附件文件同级的位置
+     *
+     * @param rl     资源加载器
+     * @param docDir 文档目录
+     * @return 附件列表文件
+     */
+    private Attachments obtainAttachments(DocDir docDir, ResourceLocator rl) {
+        ST_Loc attLoc = ofdDocument.getAttachments();
+        Attachments attachments = null;
+        if (attLoc != null) {
+            try {
+                attachments = rl.get(attLoc, Attachments::new);
+                // 切换目录到资源文件所在目录
+                rl.cd(attLoc.parent());
+            } catch (DocumentException | FileNotFoundException e) {
+                // 忽略错误
+                System.err.println(">> 无法解析Attachments.xml文件，将重新创建该文件");
+                attachments = null;
+            }
+        }
+        if (attachments == null) {
+            attachments = new Attachments();
+            docDir.putObj(DocDir.Attachments, attachments);
+            ofdDocument.setAttachments(docDir.getAbsLoc().cat(DocDir.Attachments));
+        }
+        return attachments;
+    }
+
     @Override
     public void close() throws IOException {
+        if (this.closed) {
+            return;
+        } else {
+            closed = true;
+        }
+
         try {
             if (!streamQueue.isEmpty()) {
                 /*
@@ -286,15 +444,18 @@ public class OFDDoc implements Closeable {
                 List<VirtualPage> virtualPageList = analyzer.analyze(sgmQueue);
                 vPageList.addAll(virtualPageList);
             }
-            if (vPageList.isEmpty()) {
+
+            if (!vPageList.isEmpty()) {
+                DocDir docDefault = ofdDir.obtainDocDefault();
+                // 创建虚拟页面解析引擎，并持有文档上下文。
+                VPageParseEngine parseEngine = new VPageParseEngine(pageLayout, docDefault, prm, MaxUnitID);
+                // 解析虚拟页面
+                parseEngine.process(vPageList);
+            } else if (annotationRender == null && reader == null) {
+                // 虚拟页面为空，也没有注解对象，也不是编辑模式，那么空的操作报错
                 throw new IllegalStateException("OFD文档中没有页面，无法生成OFD文档");
             }
-            DocDir docDefault = ofdDir.obtainDocDefault();
-            ResManager prm = new ResManager(docDefault, MaxUnitID);
-            // 创建虚拟页面解析引擎，并持有文档上下文。
-            VPageParseEngine parseEngine = new VPageParseEngine(pageLayout, docDefault, prm, MaxUnitID);
-            // 解析虚拟页面
-            parseEngine.process(vPageList);
+
             // 设置最大对象ID
             cdata.setMaxUnitID(MaxUnitID.get());
             // final. 执行打包程序
